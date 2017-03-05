@@ -22,38 +22,39 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 static __global__ void adjoint_method_correlation_GPU(
-    double* d_ST_max, 
-    double* d_ST_del,
-    double* d_ST_veg, 
+    float* d_ST_max, 
+    float* d_ST_del,
+    float* d_ST_veg, 
     int* d_ST_aid,
-    double* d_assets,
-    double* d_chlsky,
+    float* d_assets,
+    float* d_chlsky,
     int num_sims,
     int num_steps,
     int num_assets,
-    double dt,
-    double r,
-    double K
+    float dt,
+    float r,
+    float K
 ) {
 
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
 if (tid < num_sims) {
 
-    double assets[18]; // 3 * 6
-    double chlsky[9];  // 3 * 3
-    double Z_indp[3], Z_corr[3];
+    float assets[18]; // 3 * 6
+    float chlsky[9];  // 3 * 3
+    float2 Z_indp[3];
+    float  Z_corr[3];
 
     int winning_asset;
-    double ST_max, ST_del, ST_veg;
+    float ST_max, ST_del, ST_veg;
 
-    double x_8, x_7, x_6, x_5, x_4, x_3, x_2, x_1;
-    double x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18, x19, x20, x21, x22, x23[3], x24[3];
-    double _x24, _x22, _x19, _x15, _x9, _x0;
-    double _x23, _x21, _x17, _x16, _x13, _x11, _x8, _x5v, _x0v;
-    double _x_1[3], _x_2[3], _x_2v[3];
-    double Zs, Zv;
-    double payoff;
+    float x_8, x_7, x_6, x_5, x_4, x_3, x_2, x_1;
+    float x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18, x19, x20, x21, x22, x23[3], x24[3];
+    float _x24, _x22, _x19, _x15, _x9, _x0;
+    float _x23, _x21, _x17, _x16, _x13, _x11, _x8, _x5v, _x0v;
+    float _x_1[3], _x_2[3], _x_2v[3];
+    float Zs, Zv;
+    float payoff;
 
     // fetch asset and chlsky data
     for (int i=0; i<18; i++) { assets[i] = d_assets[i]; }
@@ -61,7 +62,7 @@ if (tid < num_sims) {
     // done fetching
      
     // random number generator and state
-    curandState rng_state;
+    curandStatePhilox4_32_10 rng_state;
     curand_init(1234, tid, 0, &rng_state);
 
     winning_asset = 0;
@@ -77,8 +78,8 @@ if (tid < num_sims) {
      for (int t=0; t<num_steps; t++)
      {
            // generate correlated rngs
-         for (int a=0; a<num_assets; a++) { Z_indp[a] = curand_normal(&rng_state); Z_corr[a] = 0.0; }
-         for (int row=0; row<num_assets; row++) for (int c=0; c<num_assets; c++) { Z_corr[row] += chlsky[num_assets*row+c] * Z_indp[c]; }
+         for (int a=0; a<num_assets; a++) { Z_indp[a] = curand_normal2(&rng_state); Z_corr[a] = 0.0; }
+         for (int row=0; row<num_assets; row++) for (int c=0; c<num_assets; c++) { Z_corr[row] += chlsky[num_assets*row+c] * Z_indp[c].x; }
 
          for (int a=0; a<num_assets; a++)
          {
@@ -94,7 +95,7 @@ if (tid < num_sims) {
             x_1 = x24[a];
 
             Zs = Z_corr[a];
-            Zv = x_8 * Zs + sqrt(1-x_8*x_8) * curand_normal(&rng_state);
+            Zv = x_8 * Zs + sqrt(1-x_8*x_8) * Z_indp[a].y;
 
             // forward pass
 
@@ -176,7 +177,8 @@ int main(int argc, char **argv)
 {
 
     int num_sims, num_steps, num_assets;
-    double overhead, start, duration, dt, r, K, T, price, delta[3], vega[3];
+    float dt, r, K, T;
+    double overhead, start, duration, price, delta[3], vega[3];
 
     num_sims  = strtod(argv[1], NULL);
     num_steps = strtod(argv[2], NULL);
@@ -184,26 +186,26 @@ int main(int argc, char **argv)
     cin >> num_assets;
 
     dim3 dimBlock(BLOCKSIZE, 1, 1);
-    dim3 dimGrid(ceil( ((double)num_sims)/BLOCKSIZE ), 1, 1);
-    int ST_bytes = num_sims * sizeof(double);
+    dim3 dimGrid(ceil( ((float)num_sims)/BLOCKSIZE ), 1, 1);
+    int ST_bytes = num_sims * sizeof(float);
     int aid_bytes = num_sims * sizeof(int);
-    int assets_bytes = num_assets * 6 * sizeof(double);
-    int chlsky_bytes = num_assets * num_assets * sizeof(double);
+    int assets_bytes = num_assets * 6 * sizeof(float);
+    int chlsky_bytes = num_assets * num_assets * sizeof(float);
 
     // allocate memory for gpu and host
-    double* h_ST_max = (double*) malloc(ST_bytes);
-    double* h_ST_del = (double*) malloc(ST_bytes);
-    double* h_ST_veg = (double*) malloc(ST_bytes);
+    float* h_ST_max = (float*) malloc(ST_bytes);
+    float* h_ST_del = (float*) malloc(ST_bytes);
+    float* h_ST_veg = (float*) malloc(ST_bytes);
     int*    h_ST_aid = (int*)    malloc(aid_bytes);
-    double* d_ST_max = (double*) malloc(ST_bytes);
-    double* d_ST_del = (double*) malloc(ST_bytes);
-    double* d_ST_veg = (double*) malloc(ST_bytes);
+    float* d_ST_max = (float*) malloc(ST_bytes);
+    float* d_ST_del = (float*) malloc(ST_bytes);
+    float* d_ST_veg = (float*) malloc(ST_bytes);
     int*    d_ST_aid = (int*)    malloc(aid_bytes);
     //
-    double* h_assets = (double*) malloc(assets_bytes);
-    double* h_chlsky = (double*) malloc(chlsky_bytes);
-    double* d_assets = (double*) malloc(assets_bytes);
-    double* d_chlsky = (double*) malloc(chlsky_bytes);
+    float* h_assets = (float*) malloc(assets_bytes);
+    float* h_chlsky = (float*) malloc(chlsky_bytes);
+    float* d_assets = (float*) malloc(assets_bytes);
+    float* d_chlsky = (float*) malloc(chlsky_bytes);
     //
     gpuErrchk( cudaMalloc((void**) &d_ST_max, ST_bytes) );
     gpuErrchk( cudaMalloc((void**) &d_ST_del, ST_bytes) );
@@ -255,6 +257,7 @@ int main(int argc, char **argv)
     gpuErrchk( cudaMemcpy(h_ST_del, d_ST_del, ST_bytes, cudaMemcpyDeviceToHost) );
     gpuErrchk( cudaMemcpy(h_ST_veg, d_ST_veg, ST_bytes, cudaMemcpyDeviceToHost) );
     gpuErrchk( cudaMemcpy(h_ST_aid, d_ST_aid, aid_bytes, cudaMemcpyDeviceToHost) );
+
 
     for (int i=0; i<num_sims; i++) {
         price += h_ST_max[i];

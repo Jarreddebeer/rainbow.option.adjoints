@@ -46,16 +46,14 @@ if (tid < num_sims) {
     double  Z_corr[3];
 
     int winning_asset;
-    double ST_max, ST_max_sum;
-    double ST_del, ST_del_sum[3];
-    double ST_veg, ST_veg_sum[3];
+    double ST_max, ST_del, ST_veg;
 
     double x_8, x_7, x_6, x_5, x_4, x_3, x_2, x_1;
     double x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18, x19, x20, x21, x22, x23[3], x24[3];
-    double _x24, _x22, _x19, _x15, _x12, _x9, _x5, _x1, _x0;
-    double _x23, _x21, _x20, _x17, _x16, _x13, _x11, _x8, _x5v, _x0v;
+    double _x24, _x22, _x21, _x19, _x15, _x9, _x0;
+    double _x23, _x17, _x16, _x13, _x11, _x8, _x5v, _x0v;
     double _x_1[3], _x_2[3], _x_2v[3];
-    double y1, y2, Zs, Zv;
+    double Zs, Zv;
     double payoff;
 
     // fetch asset and chlsky data
@@ -81,8 +79,7 @@ if (tid < num_sims) {
      {
            // generate correlated rngs
          for (int a=0; a<num_assets; a++) { Z_indp[a] = curand_normal2_double(&rng_state); Z_corr[a] = 0.0; }
-         for (int r=0; r<num_assets; r++) for (int c=0; c<num_assets; c++) { Z_corr[r] += chlsky[num_assets*r+c] * Z_indp[c].x; }
-//         for (int a=0; a<num_assets; a++) { Z_corr_generated[a][t] = Z_corr[a]; }
+         for (int row=0; row<num_assets; row++) for (int c=0; c<num_assets; c++) { Z_corr[row] += chlsky[num_assets*row+c] * Z_indp[c].x; }
 
          for (int a=0; a<num_assets; a++)
          {
@@ -129,9 +126,6 @@ if (tid < num_sims) {
             x23[a] = max(x21, 0.0);
             x24[a] = x_1 * x22;
 
-            y1 = x24[a];
-            y2 = x23[a];
-
             // adjoint pass
 
             // asset adjoints
@@ -140,16 +134,13 @@ if (tid < num_sims) {
             _x22 = x_1 * _x24;
             _x19 = x22 * _x22;
             _x15 = _x19;
-            _x12 = _x15;
             _x9 = _x15;
-            _x5 = Zs * _x12;
-            _x1 = _x19;
             _x0 = -0.5 * _x9;
 
             // volatility adjoints
             _x23 = 1.0;
             _x21 = (x23[a] > 0.0) ? _x23 : 0.0;
-            _x13 = _x16 = _x17 = _x20 = _x21 = 1;
+            _x13 = _x16 = _x17 = _x21;
             _x11 = Zv * _x16;
             _x8 = -1 * _x17;
             _x5v = x_5 * _x11;
@@ -266,7 +257,6 @@ int main(int argc, char **argv)
     gpuErrchk( cudaMemcpy(h_ST_veg, d_ST_veg, ST_bytes, cudaMemcpyDeviceToHost) );
     gpuErrchk( cudaMemcpy(h_ST_aid, d_ST_aid, aid_bytes, cudaMemcpyDeviceToHost) );
 
-    duration = second()-start-overhead;
 
     for (int i=0; i<num_sims; i++) {
         price += h_ST_max[i];
@@ -283,6 +273,9 @@ int main(int argc, char **argv)
         printf("delta %d: %0.15g\n", disc_fac * delta[i] / num_sims);
         printf("vega %d: %0.15g\n",  disc_fac * vega[i]  / num_sims);
     }
+
+    duration = second()-start-overhead;
+
     printf("======================================\n");
     printf("duration: %0.15g\n", duration);
     printf("======================================\n");
