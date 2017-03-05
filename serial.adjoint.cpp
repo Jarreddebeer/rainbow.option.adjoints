@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <iostream>
+#include <cmath>
 #include <random>
 #include <iomanip>
 #include <vector>
@@ -11,9 +12,10 @@ using namespace std;
 void adjoint_method_correlation(
     int num_sims,
     int num_steps,
-    vector<asset> assets,
+    int num_assets,
+    const vector<asset>& assets,
     double dt,
-    vector<vector<double> > chol_decomp
+    const vector<vector<double> >& chol_decomp
 ) {
 
     double x_7, x_6, x_5, x_4, x_3, x_2, x_1;
@@ -23,42 +25,36 @@ void adjoint_method_correlation(
     double _x_1, _x_2, _x_3;
     double y1, y2, Zs, Zv;
 
-    vector<double> Z_indp(assets.size());
-    vector<double> Z_corr(assets.size());
-    vector<vector<double> > Z_corr_generated(assets.size(), vector<double>(num_steps));
-    vector<vector<double> > St_history(num_steps+1, vector<double>(assets.size()));
-    vector<vector<double> > Vt_history(num_steps+1, vector<double>(assets.size()));
+    vector<double> Z_indp(num_assets);
+    vector<double> Z_corr(num_assets);
+    vector<vector<double> > Z_corr_generated(num_assets, vector<double>(num_steps));
     double ST_max_sum = 0.0, ST_max_del_sum = 0.0, ST_max_veg_sum = 0.0;
     double ST_max, ST_del, ST_veg;
-    double St;
     int winning_asset;
 
-    vector<double> ST_del_store = vector<double>(assets.size());
-    vector<double> ST_veg_store = vector<double>(assets.size());
-    for (int a=0; a<assets.size(); a++) { ST_del_store[a] = 0.0; ST_veg_store[a] = 0.0; }
+    vector<double> ST_del_store = vector<double>(num_assets);
+    vector<double> ST_veg_store = vector<double>(num_assets);
+    for (int a=0; a<num_assets; a++) { ST_del_store[a] = 0.0; ST_veg_store[a] = 0.0; }
 
-    default_random_engine generator;
-    generator.seed(0);
-    normal_distribution<double> distribution(0.0, 1.0);
+    std::mt19937 generator;
+    std::normal_distribution<double> distribution(0.0, 1.0);
 
     for (int i=0; i<num_sims; i++) {
 
         for (int t=0; t<num_steps; t++) {
             // generate randoms for each asset
-            for (int a=0; a<assets.size(); a++) { Z_indp[a] = distribution(generator); }
+            for (int a=0; a<num_assets; a++) { Z_indp[a] = distribution(generator); }
             // correlate the generated randoms
-            for (int a=0; a<assets.size(); a++) Z_corr[a] = 0;
-            for (int r=0; r<assets.size(); r++) for (int c=0; c<assets.size(); c++) {
+            for (int a=0; a<num_assets; a++) Z_corr[a] = 0;
+            for (int r=0; r<num_assets; r++) for (int c=0; c<num_assets; c++) {
                 Z_corr[r] += chol_decomp[r][c] * Z_indp[c];
             }
-            for (int a=0; a<assets.size(); a++) Z_corr_generated[a][t] = Z_corr[a];
+            for (int a=0; a<num_assets; a++) Z_corr_generated[a][t] = Z_corr[a];
         }
 
         ST_max = ST_del = ST_veg = 0.0;
         winning_asset = 0;
-        for (int a=0; a<assets.size(); a++) {
-
-            St = assets[a].S;
+        for (int a=0; a<num_assets; a++) {
 
             double rho = assets[a].rho;
             double kappa = assets[a].kappa;
@@ -169,7 +165,7 @@ void adjoint_method_correlation(
     printf("--------------------------------------\n");
     printf("Heston 3 assets rainbow call on max\n");
     printf("price: %0.15g\n", price);
-    for (int a=0; a<assets.size(); a++) {
+    for (int a=0; a<num_assets; a++) {
         printf("delta a%d: %0.15g\n", a, disc_fac * (ST_del_store[a] / num_sims));
         printf("vega  a%d: %0.15g\n", a, disc_fac * (ST_veg_store[a] / num_sims));
     }
@@ -179,26 +175,26 @@ void adjoint_method_correlation(
 
 int main(int argc, char **argv)
 {
+    int num_assets, simSize, stepSize;
+    double overhead, start, duration, dt;
+
     int num_sims  = strtod(argv[1], NULL);
     int num_steps = strtod(argv[2], NULL);
 
-//    vector<asset> assets;
-    int numAssets, simSize, stepSize;
-    double overhead, start, duration, dt;
-    vector<asset> assets;
-    vector<vector<double> > chol_decomp(numAssets, vector<double>(numAssets));
+    cin >> num_assets;
+    vector<asset> assets(num_assets);
+    vector<vector<double> > chol_decomp(num_assets, vector<double>(num_assets));
 
     // read asset parameters
-    cin >> numAssets;
-    for (int i=0; i<numAssets; i++) {
+    for (int i=0; i<num_assets; i++) {
         asset a;
         cin >> a.S >> a.V >> a.r >> a.T >> a.kappa >> a.theta >> a.sigma >> a.rho >> a.K;
-        assets.push_back(a);
+        assets[i] = a;
     }
 
     // read lower cholesky decomposed matrix
-    for (int i=0; i<numAssets; i++) {
-        for (int j=0; j<numAssets; j++) {
+    for (int i=0; i<num_assets; i++) {
+        for (int j=0; j<num_assets; j++) {
             cin >> chol_decomp[i][j];
         }
     }
@@ -207,7 +203,7 @@ int main(int argc, char **argv)
     dt = assets[0].T / num_steps;
 
     start = second();
-    adjoint_method_correlation(num_sims, num_steps, assets, dt, chol_decomp);
+    adjoint_method_correlation(num_sims, num_steps, num_assets, assets, dt, chol_decomp);
     duration = second()-start-overhead;
 
     printf("======================================\n");
