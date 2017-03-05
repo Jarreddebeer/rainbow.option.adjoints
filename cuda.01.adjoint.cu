@@ -1,0 +1,344 @@
+#include <cstdlib>
+#include <iostream>
+#include <cmath>
+#include <cuda_runtime.h>
+#include <curand.h>
+#include <curand_kernel.h>
+#include <iomanip>
+#include <vector>
+#include "asset.h"
+#include "second.h"
+
+#define BLOCKSIZE 128
+
+using namespace std;
+
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true) {
+   if (code != cudaSuccess) {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
+static __global__ void adjoint_method_correlation_GPU(
+    double* d_ST_max, 
+    double* d_ST_del,
+    double* d_ST_veg, 
+    int* d_ST_aid,
+    double* d_assets,
+    double* d_chlsky,
+    int num_sims,
+    int num_steps,
+    int num_assets,
+    double dt,
+    double r,
+    double K
+) {
+
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+if (tid < num_sims) {
+
+    double assets[18]; // 3 * 6
+    double chlsky[9];  // 3 * 3
+    double Z_indp[3], Z_corr[3];
+
+    int winning_asset;
+    double ST_max, ST_max_sum;
+    double ST_del, ST_del_sum[3];
+    double ST_veg, ST_veg_sum[3];
+
+    double x_8, x_7, x_6, x_5, x_4, x_3, x_2, x_1;
+    double x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18, x19, x20, x21, x22, x23[3], x24[3];
+    double _x24, _x22, _x19, _x15, _x12, _x9, _x5, _x1, _x0;
+    double _x23, _x21, _x20, _x17, _x16, _x13, _x11, _x8, _x5v, _x0v;
+    double _x_1[3], _x_2[3], _x_2v[3];
+    double y1, y2, Zs, Zv;
+    double payoff;
+
+    // fetch asset and chlsky data
+    for (int i=0; i<18; i++) { assets[i] = d_assets[i]; }
+    for (int i=0; i<9; i++)  { chlsky[i] = d_chlsky[i]; }
+    // done fetching
+     
+    // random number generator and state
+    curandState rng_state;
+    curand_init(1234, tid, 0, &rng_state);
+
+//    vector<double> Z_indp(num_assets);
+//    vector<double> Z_corr(num_assets);
+//    vector<vector<double> > Z_corr_generated(num_assets, vector<double>(num_steps));
+//    double ST_max, ST_del, ST_veg;
+//    int winning_asset;
+
+//    vector<double> ST_del_store = vector<double>(num_assets);
+//    vector<double> ST_veg_store = vector<double>(num_assets);
+//    for (int a=0; a<num_assets; a++) { ST_del_store[a] = 0.0; ST_veg_store[a] = 0.0; }
+
+//    std::mt19937 generator;
+//    std::normal_distribution<double> distribution(0.0, 1.0);
+
+    winning_asset = 0;
+    ST_max = ST_del = ST_veg = 0.0;
+
+    for (int a=0; a<num_assets; a++) {
+        x23[a] = assets[1*num_assets+a]; // vega  
+        x24[a] = assets[0*num_assets+a]; // asset
+        // init sensitivity vector
+        _x_1[a] = 1.0; _x_2[a] = 0.0; _x_2v[a] = 1.0; 
+     }
+
+     for (int t=0; t<num_steps; t++)
+     {
+           // generate correlated rngs
+         for (int a=0; a<num_assets; a++) { Z_indp[a] = curand_normal(&rng_state); Z_corr[a] = 0.0; }
+         for (int r=0; r<num_assets; r++) for (int c=0; c<num_assets; c++) { Z_corr[r] += chlsky[num_assets*r+c] * Z_indp[c]; }
+//         for (int a=0; a<num_assets; a++) { Z_corr_generated[a][t] = Z_corr[a]; }
+
+         for (int a=0; a<num_assets; a++)
+         {
+          
+            // init input parameters
+            x_8 = assets[2*num_assets+a]; // rho
+            x_7 = assets[3*num_assets+a]; // kappa
+            x_6 = assets[4*num_assets+a]; // theta
+            x_5 = assets[5*num_assets+a]; // sigma
+            x_4 = dt;
+            x_3 = r;
+            x_2 = x23[a];
+            x_1 = x24[a];
+
+//if (tid==8) { printf("-------- tid: %d, a: %d, t: %d, x_8: %f, x_7: %f, x_6: %f, x_5: %f, x_4: %f, x_3: %f, x_2: %f, x_1: %f\n", tid, a, t, x_8, x_7, x_6, x_5, x_4, x_3, x_2, x_1); }
+//         double rho = assets[a].rho;
+//         double kappa = assets[a].kappa;
+//         double theta = assets[a].theta;
+//         double sigma = assets[a].sigma;
+//         double r = assets[a].r;
+//         x24 = assets[a].S;
+//         x23 = assets[a].V;
+//         _x_1 = 1.0;
+//         _x_2 = 0.0;
+//         _x_2v = 1.0;
+
+             Zs = Z_corr[a];
+             Zv = x_8 * Zs + sqrt(1-x_8*x_8) * curand_normal(&rng_state);
+
+             // forward pass
+
+             x0 = x_2 * x_4;
+             x1 = x_3 * x_4;
+             x2 = x_6 * x_4;
+             x3 = x_5 * x_5;
+             x4 = Zv * Zv;
+             x5 = sqrt(x0);
+             x6 = x3 * x_4;
+             x7 = x_7 * x2;
+             x8 = x_7 * x0;
+             x9 = -0.5 * x0;
+             x10 = x4 - 1;
+             x11 = x_5 * x5;
+             x12 = Zs * x5;
+             x13 = x_2 + x7;
+             x14 = 0.25 * x10;
+             x15 = x9 + x12;
+             x16 = Zv * x11;
+             x17 = x13 - x8;
+             x18 = x14 * x6;
+             x19 = x1 + x15;
+             x20 = x17 + x16;
+             x21 = x20 + x18;
+
+             x22 = exp(x19);
+             x23[a] = max(x21, 0.0);
+             x24[a] = x_1 * x22;
+
+             y1 = x24[a];
+             y2 = x23[a];
+
+             // adjoint pass
+
+             // asset adjoints
+
+             _x24 = 1;
+             _x22 = x_1 * _x24;
+             _x19 = x22 * _x22;
+             _x15 = _x19;
+             _x12 = _x15;
+             _x9 = _x15;
+             _x5 = Zs * _x12;
+             _x1 = _x19;
+             _x0 = -0.5 * _x9;
+
+             // volatility adjoints
+             _x23 = 1.0;
+             _x21 = (x23[a] > 0.0) ? _x23 : 0.0;
+             _x13 = _x16 = _x17 = _x20 = _x21 = 1;
+             _x11 = Zv * _x16;
+             _x8 = -1 * _x17;
+             _x5v = x_5 * _x11;
+             _x0v = (0.5 * _x5v / x5) + _x8*x_7;
+
+             // xbar inputs
+             _x_1[a] = (_x24*x22) * _x_1[a];
+             _x_2[a] = _x_2[a]*x22 - (_x0*x_4) * _x_2v[a] * (-1 + Zs / x5);
+             _x_2v[a] = _x_2v[a] * (_x13 + _x0v*x_4);
+
+         }
+     }
+
+     for (int a=0; a<num_assets; a++) {
+         payoff = max(x24[a]-K, 0.0);
+         if (payoff > ST_max) {
+             winning_asset = a;
+             ST_max = payoff;
+             ST_del = _x_1[a];
+             ST_veg = _x_2[a];
+         }
+     }
+
+     d_ST_max[tid] = ST_max;
+     d_ST_del[tid] = ST_del;
+     d_ST_veg[tid] = ST_veg;
+     d_ST_aid[tid] = winning_asset;
+
+//     ST_max_sum += ST_max;
+//     ST_del_sum[winning_asset] += ST_del;
+//     ST_del_sum[winning_asset] += ST_veg;
+//     if      (winning_asset == 0) { ST_del_sum1 += ST_del; ST_veg_sum1 += ST_veg; }
+//     else if (winning_asset == 1) { ST_del_sum2 += ST_del; ST_veg_sum2 += ST_veg;}
+//       else if (winning_asset == 2) { ST_del_sum3 += ST_del; ST_veg_sum3 += ST_veg;}
+//    }
+//    d_ST_max[tid] = ST_max_sum;
+/*
+    // calculate the rainbow option price
+    // it is assumed r and T are the same for all assets. We simply take the 0th one.
+    double disc_fac = exp(-assets[0].r * assets[0].T);
+    double price = disc_fac * (ST_max_sum / num_sims);
+    printf("--------------------------------------\n");
+    printf("Heston 3 assets rainbow call on max\n");
+    printf("price: %0.15g\n", price);
+    //
+    printf("delta 1%d: %0.15g\n", 1, disc_fac * (ST_del_sum1 / num_sims));
+    printf("vega  1%d: %0.15g\n", 1, disc_fac * (ST_veg_sum1 / num_sims));
+    printf("delta 2%d: %0.15g\n", 2, disc_fac * (ST_del_sum2 / num_sims));
+    printf("vega  2%d: %0.15g\n", 2, disc_fac * (ST_veg_sum2 / num_sims));
+    printf("delta 3%d: %0.15g\n", 3, disc_fac * (ST_del_sum3 / num_sims));
+    printf("vega  3%d: %0.15g\n", 3, disc_fac * (ST_veg_sum3 / num_sims));
+*/
+
+} // end if (tid < num_sims)
+}
+
+
+int main(int argc, char **argv)
+{
+
+    int num_sims, num_steps, num_assets;
+    double overhead, start, duration, dt, r, K, T, price, delta[3], vega[3];
+
+    num_sims  = strtod(argv[1], NULL);
+    num_steps = strtod(argv[2], NULL);
+
+    cin >> num_assets;
+//    vector<asset> assets(num_assets);
+//    vector<vector<double> > chol_decomp(num_assets, vector<double>(num_assets));
+
+    dim3 dimBlock(BLOCKSIZE, 1, 1);
+    dim3 dimGrid(ceil( ((double)num_sims)/BLOCKSIZE ), 1, 1);
+    int ST_bytes = num_sims * sizeof(double);
+    int aid_bytes = num_sims * sizeof(int);
+    int assets_bytes = num_assets * 6 * sizeof(double);
+    int chlsky_bytes = num_assets * num_assets * sizeof(double);
+
+    // allocate memory for gpu and host
+    double* h_ST_max = (double*) malloc(ST_bytes);
+    double* h_ST_del = (double*) malloc(ST_bytes);
+    double* h_ST_veg = (double*) malloc(ST_bytes);
+    int*    h_ST_aid = (int*)    malloc(aid_bytes);
+    double* d_ST_max = (double*) malloc(ST_bytes);
+    double* d_ST_del = (double*) malloc(ST_bytes);
+    double* d_ST_veg = (double*) malloc(ST_bytes);
+    int*    d_ST_aid = (int*)    malloc(aid_bytes);
+    //
+    double* h_assets = (double*) malloc(assets_bytes);
+    double* h_chlsky = (double*) malloc(chlsky_bytes);
+    double* d_assets = (double*) malloc(assets_bytes);
+    double* d_chlsky = (double*) malloc(chlsky_bytes);
+    //
+    gpuErrchk( cudaMalloc((void**) &d_ST_max, ST_bytes) );
+    gpuErrchk( cudaMalloc((void**) &d_ST_del, ST_bytes) );
+    gpuErrchk( cudaMalloc((void**) &d_ST_veg, ST_bytes) );
+    gpuErrchk( cudaMalloc((void**) &d_ST_aid, aid_bytes) );
+    gpuErrchk( cudaMalloc((void**) &d_assets, assets_bytes) );
+    gpuErrchk( cudaMalloc((void**) &d_chlsky, chlsky_bytes) );
+
+    // read asset parameters
+    for (int i=0; i<num_assets; i++) {
+        asset a;
+        cin >> a.S >> a.V >> a.r >> a.T >> a.kappa >> a.theta >> a.sigma >> a.rho >> a.K;
+        // these two are constant between assets (i'm being lazy here by re-assigning)
+        T = a.T;
+        dt = T / num_steps;
+        r = a.r;
+        K = a.K;
+        //
+        h_assets[0*num_assets+i] = a.S;
+        h_assets[1*num_assets+i] = a.V;
+        h_assets[2*num_assets+i] = a.rho;
+        h_assets[3*num_assets+i] = a.kappa;
+        h_assets[4*num_assets+i] = a.theta;
+        h_assets[5*num_assets+i] = a.sigma;
+//        h_assets[6*6+i] = a.K;
+//        h_assets[7*6+i] = a.T;
+    }
+
+    // read lower cholesky decomposed matrix
+    for (int i=0; i<num_assets; i++) {
+        for (int j=0; j<num_assets; j++) {
+            cin >> h_chlsky[num_assets*i+j];
+        }
+    }
+
+    overhead = second()-second(); // overhead of timing method
+    start = second();
+
+    // copy data across
+    gpuErrchk( cudaDeviceSetSharedMemConfig(cudaSharedMemBankSizeEightByte) );
+    gpuErrchk( cudaMemcpy(d_assets, h_assets, assets_bytes, cudaMemcpyHostToDevice) );
+    gpuErrchk( cudaMemcpy(d_chlsky, h_chlsky, chlsky_bytes, cudaMemcpyHostToDevice) );
+
+    adjoint_method_correlation_GPU<<<dimGrid, dimBlock>>>(
+        d_ST_max, d_ST_del, d_ST_veg, d_ST_aid, d_assets, d_chlsky, num_sims, num_steps, num_assets, dt, r, K
+    );
+    gpuErrchk( cudaDeviceSynchronize() );
+
+    gpuErrchk( cudaPeekAtLastError() );
+    gpuErrchk( cudaMemcpy(h_ST_max, d_ST_max, ST_bytes, cudaMemcpyDeviceToHost) );
+    gpuErrchk( cudaMemcpy(h_ST_del, d_ST_del, ST_bytes, cudaMemcpyDeviceToHost) );
+    gpuErrchk( cudaMemcpy(h_ST_veg, d_ST_veg, ST_bytes, cudaMemcpyDeviceToHost) );
+    gpuErrchk( cudaMemcpy(h_ST_aid, d_ST_aid, aid_bytes, cudaMemcpyDeviceToHost) );
+
+    duration = second()-start-overhead;
+
+    for (int i=0; i<num_sims; i++) {
+        price += h_ST_max[i];
+        delta[(int)h_ST_aid[i]] += h_ST_del[i];
+         vega[(int)h_ST_aid[i]] += h_ST_veg[i];
+    }    
+    double disc_fac = exp(-r*T);
+    price = disc_fac * price / num_sims;
+
+    printf("--------------------------------------\n");
+    printf("Heston 3 assets rainbow call on max\n");
+    printf("price: %0.15g\n", price);
+    for (int i=0; i<num_assets; i++) {
+        printf("delta %d: %0.15g\n", disc_fac * delta[i] / num_sims);
+        printf("vega %d: %0.15g\n",  disc_fac * vega[i]  / num_sims);
+    }
+    printf("======================================\n");
+    printf("duration: %0.15g\n", duration);
+    printf("======================================\n");
+
+    return 0;
+}
