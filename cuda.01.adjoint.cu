@@ -176,7 +176,8 @@ int main(int argc, char **argv)
 {
 
     int num_sims, num_steps, num_assets;
-    double overhead, start, duration, dt, r, K, T, price, delta[3], vega[3];
+    double dt, r, K, T, price, delta[3], vega[3];
+    double overhead, start, duration, start_reduction, reduction_duration;
 
     num_sims  = strtod(argv[1], NULL);
     num_steps = strtod(argv[2], NULL);
@@ -255,6 +256,8 @@ int main(int argc, char **argv)
     gpuErrchk( cudaMemcpy(h_ST_del, d_ST_del, ST_bytes, cudaMemcpyDeviceToHost) );
     gpuErrchk( cudaMemcpy(h_ST_veg, d_ST_veg, ST_bytes, cudaMemcpyDeviceToHost) );
     gpuErrchk( cudaMemcpy(h_ST_aid, d_ST_aid, aid_bytes, cudaMemcpyDeviceToHost) );
+    
+    start_reduction = second();
 
     for (int i=0; i<num_sims; i++) {
         price += h_ST_max[i];
@@ -272,8 +275,10 @@ int main(int argc, char **argv)
         printf("vega %d: %0.15g\n",  disc_fac * vega[i]  / num_sims);
     }
 
+    reduction_duration = second()-start_reduction-overhead;
     duration = second()-start-overhead;
 
+    printf("reduction: %0.15g\n", reduction_duration); 
     printf("======================================\n");
     printf("duration: %0.15g\n", duration);
     printf("======================================\n");
