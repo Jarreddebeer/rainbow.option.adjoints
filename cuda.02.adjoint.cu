@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <stdio.h>
 #include <iostream>
 #include <cmath>
 #include <cuda_runtime.h>
@@ -268,10 +269,10 @@ int main(int argc, char **argv)
 
     printf("--------------------------------------\n");
     printf("Heston 3 assets rainbow call on max\n");
-    printf("price: %0.15g\n", price);
+    printf("price 0: %0.15g\n", price);
     for (int i=0; i<num_assets; i++) {
-        printf("delta %d: %0.15g\n", disc_fac * delta[i] / num_sims);
-        printf("vega %d: %0.15g\n",  disc_fac * vega[i]  / num_sims);
+        printf("delta %d: %0.15g\n", i, disc_fac * delta[i] / num_sims);
+        printf("vega %d: %0.15g\n", i, disc_fac * vega[i]  / num_sims);
     }
 
     duration = second()-start-overhead;

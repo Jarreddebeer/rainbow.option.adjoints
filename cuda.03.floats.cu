@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <stdio.h>
 #include <iostream>
 #include <cmath>
 #include <cuda_runtime.h>
@@ -78,7 +79,11 @@ if (tid < num_sims) {
      for (int t=0; t<num_steps; t++)
      {
            // generate correlated rngs
-         for (int a=0; a<num_assets; a++) { Z_indp[a] = curand_normal2(&rng_state); Z_corr[a] = 0.0; }
+         for (int a=0; a<num_assets; a++) {
+            double2 Z_indp_tmp = curand_normal2_double(&rng_state);
+            Z_indp[a].x = (float)Z_indp_tmp.x;
+            Z_indp[a].y = (float)Z_indp_tmp.y;
+            Z_corr[a] = 0.0; }
          for (int row=0; row<num_assets; row++) for (int c=0; c<num_assets; c++) { Z_corr[row] += chlsky[num_assets*row+c] * Z_indp[c].x; }
 
          for (int a=0; a<num_assets; a++)
@@ -269,10 +274,10 @@ int main(int argc, char **argv)
 
     printf("--------------------------------------\n");
     printf("Heston 3 assets rainbow call on max\n");
-    printf("price: %0.15g\n", price);
+    printf("price 0: %0.15g\n", price);
     for (int i=0; i<num_assets; i++) {
-        printf("delta %d: %0.15g\n", disc_fac * delta[i] / num_sims);
-        printf("vega %d: %0.15g\n",  disc_fac * vega[i]  / num_sims);
+        printf("delta %d: %0.15g\n", i, disc_fac * delta[i] / num_sims);
+        printf("vega %d: %0.15g\n", i, disc_fac * vega[i]  / num_sims);
     }
 
     duration = second()-start-overhead;
